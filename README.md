@@ -16,30 +16,46 @@ A full test suite passes against this hardware.  Other Netgear Smart Managed
 Plus switches that share the same web UI (GS108Ev3, GS116Ev2, etc.) are likely
 compatible.
 
+## Installation
+
+```bash
+pip install netgear-tool
+```
+
+After installation, the `netgear` CLI command is available and the
+`netgear_tool` Python package is importable:
+
+```python
+from netgear_tool import Switch, PortSpeed, RateLimit
+```
+
+The legacy module name `netgear_switch` is still importable as a
+backward-compatibility shim.
+
 ## Files
 
 | File | Purpose |
 |---|---|
-| `netgear_switch.py` | Python SDK (`Switch` class, all read/write operations) |
-| `cli.py` | Cisco IOS-inspired interactive CLI |
-| `test_read.py` | Smoke test: all read operations against live switch |
-| `test_writes.py` | Write verification tests |
+| `src/netgear_tool/__init__.py` | Python SDK (`Switch` class, all read/write operations) |
+| `src/netgear_tool/_cli.py` | CLI entry point (installed as `netgear` command) |
+| `cli.py` | Standalone CLI script (same as `netgear` command, for direct use) |
+| `netgear_switch.py` | Backward-compatibility shim (imports from `netgear_tool`) |
 | `docs/sdk.md` | SDK programmer reference |
 | `docs/cli.md` | CLI user guide |
 
 ## Requirements
 
 ```bash
-pip install requests
+pip install netgear-tool
 ```
 
-No other dependencies.  HTML parsing is done with regex against the known
-page structure.
+No other dependencies beyond `requests`.  HTML parsing is done with regex
+against the known page structure.
 
 ## Quick start — SDK
 
 ```python
-from netgear_switch import Switch, RateLimit
+from netgear_tool import Switch, PortSpeed, RateLimit
 
 with Switch('192.168.0.1', password='secret') as sw:
     # Read system info
@@ -50,7 +66,6 @@ with Switch('192.168.0.1', password='secret') as sw:
         print(port)
 
     # Configure a port
-    from netgear_switch import PortSpeed
     sw.set_port(1, speed=PortSpeed.AUTO, fc_enabled=True)
 
     # Rate limiting
@@ -59,7 +74,7 @@ with Switch('192.168.0.1', password='secret') as sw:
     # 802.1Q VLANs
     sw.set_dot1q_enabled(True)
     sw.add_vlan(10)
-    sw.set_vlan_membership(10, '10001')   # ports 1 and 5 untagged
+    sw.set_vlan_membership(10, '11112')   # ports 1-4 untagged, port 5 tagged
     sw.set_port_pvid(1, 10)
 ```
 
@@ -68,6 +83,8 @@ See [docs/sdk.md](docs/sdk.md) for the full API reference.
 ## Quick start — CLI
 
 ```bash
+netgear 192.168.0.1
+# or directly:
 python3 cli.py 192.168.0.1
 ```
 
@@ -82,6 +99,7 @@ GS105Ev2(config-if-gi1)# switchport access vlan 10
 GS105Ev2(config-if-gi1)# exit
 GS105Ev2(config)# end
 GS105Ev2# show vlan
+GS105Ev2# show running-config
 ```
 
 Commands can be abbreviated to their shortest unambiguous prefix (`conf t`,
@@ -121,6 +139,15 @@ ignores the request — a subsequent GET always returns the hardware-controlled
 state.  This appears to be a firmware limitation on the GS105Ev2: the web UI
 shows the toggle but the hardware drives the actual state.  The method is
 provided for completeness; it may work on other models or firmware versions.
+
+### Ports cannot be fully removed from VLAN 1
+
+The firmware silently rejects any attempt to set a port's VLAN 1 membership to
+`'3'` (not-a-member).  Ports that are access members of another VLAN remain as
+tagged members of VLAN 1 in the firmware — they simply have their PVID set to
+the access VLAN so untagged ingress traffic is steered correctly.  The CLI's
+`show running-config` hides this detail and displays such ports as access ports
+on their PVID VLAN.
 
 ## Protocol notes
 
