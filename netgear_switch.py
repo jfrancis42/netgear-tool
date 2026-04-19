@@ -25,4 +25,5 @@ from netgear_tool import (  # noqa: F401
     MirrorConfig,
     IGMPConfig,
     Dot1QVlan,
+    make_switch,
 )

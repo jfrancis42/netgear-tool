@@ -60,6 +60,7 @@ from __future__ import annotations
 import hashlib
 import re
 import time
+import warnings
 from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Any, Dict, List, Optional, Tuple
@@ -353,11 +354,18 @@ class Switch:
         self.password = password
         self.timeout = timeout
         self._session = requests.Session()
+        # GS305E and newer models check the Referer header to distinguish
+        # in-application requests from direct browser navigation.  Setting it
+        # permanently on the session satisfies both old (GS105Ev2) and new
+        # (GS305E) firmware, and also ensures logout.cgi works correctly.
+        self._session.headers.update({'Referer': self._url('index.cgi')})
         self._logged_in = False
         self._login_time: float = 0.0
         # Re-auth 30s before the ~5-minute inactivity timeout
         self._session_ttl: float = 270.0
         self._port_count: int = 5   # updated at login
+        self._model: str = ''       # set by make_switch()
+        self._firmware: str = ''    # set by make_switch()
 
     # ------------------------------------------------------------------
     # URL helpers
@@ -445,9 +453,11 @@ class Switch:
         )
         r2.raise_for_status()
 
-        # Check for error messages (session limit, wrong password, etc.)
-        if self._is_login_page(r2.text):
-            # Not the success redirect page — something went wrong
+        # Detect login failure.
+        # GS105Ev2: failed POST returns a redirect page containing 'RedirectToLoginPage'.
+        # GS305E: failed POST returns the login form page which has 'login.css'.
+        # A successful POST for either model returns a short redirect-to-index script.
+        if self._is_login_page(r2.text) or 'login.css' in r2.text:
             err_m = re.search(r'id="pwdErr"[^>]*>(.*?)</div>', r2.text, re.DOTALL)
             msg = err_m.group(1).strip() if err_m else 'Unknown error'
             raise RuntimeError(f'Login failed: {msg}')
@@ -483,11 +493,22 @@ class Switch:
         self._logged_in = False
 
     def __enter__(self) -> 'Switch':
-        self.login()
+        if not self._logged_in:
+            self.login()
         return self
 
     def __exit__(self, *_):
         self.logout()
+
+    @property
+    def model(self) -> str:
+        """Model string (e.g. 'GS305E'), or '' if not yet detected."""
+        return self._model
+
+    @property
+    def firmware(self) -> str:
+        """Firmware version string (e.g. 'V2.6.0.48'), or '' if not yet detected."""
+        return self._firmware
 
     # ==================================================================
     # System information
@@ -1126,3 +1147,79 @@ class Switch:
         except Exception:
             pass
         self._logged_in = False
+
+
+# ===========================================================================
+# Model registry and auto-detection factory
+# ===========================================================================
+
+# Maps model-name prefixes (case-insensitive) to port count.
+# Add entries as new models are confirmed.
+_MODEL_PORT_COUNT: Dict[str, int] = {
+    'GS305E':   5,
+    'GS305EP':  5,
+    'GS308E':   8,
+    'GS308EP':  8,
+    'GS105E':   5,   # covers GS105Ev2
+    'GS108E':   8,   # covers GS108Ev3
+    'GS108PE':  8,
+    'GS116E':   16,  # covers GS116Ev2
+    'GS110MX':  10,
+    'GS752TP':  52,
+}
+
+
+def _port_count_from_model(model: Optional[str]) -> Optional[int]:
+    """Return port count for *model*, or None if the model is not in the registry."""
+    if not model:
+        return None
+    m = model.upper()
+    for prefix, count in _MODEL_PORT_COUNT.items():
+        if m.startswith(prefix.upper()):
+            return count
+    return None
+
+
+def make_switch(
+    host: str,
+    password: str = 'password',
+    timeout: float = 10.0,
+) -> Switch:
+    """
+    Connect to a Netgear Smart Managed Plus switch and return a connected Switch.
+
+    Logs in, then reads ``switch_info.cgi`` to detect the model, firmware
+    version, and port count.  The returned object is already logged in::
+
+        with make_switch('192.168.0.1', password='secret') as sw:
+            print(sw.model, sw.firmware)
+            for p in sw.get_port_settings():
+                print(p)
+
+    If the model is not in the known registry a RuntimeWarning is emitted, but
+    the Switch is still returned — unknown models are often compatible.
+
+    Raises RuntimeError if the host is unreachable or authentication fails.
+    """
+    sw = Switch(host, password=password, timeout=timeout)
+    sw.login()
+    try:
+        cfg = sw.get_switch_config()
+        sw._model = cfg.model
+        sw._firmware = cfg.firmware
+        pc = _port_count_from_model(cfg.model)
+        if pc is not None:
+            sw._port_count = pc
+        if cfg.model and not any(
+            cfg.model.upper().startswith(k.upper()) for k in _MODEL_PORT_COUNT
+        ):
+            warnings.warn(
+                f'Unknown Netgear switch model {cfg.model!r}. '
+                'Behaviour may be incorrect for unsupported models. '
+                'Please report at https://github.com/jfrancis42/ansible-netgear/issues.',
+                RuntimeWarning,
+                stacklevel=2,
+            )
+    except Exception:
+        pass
+    return sw

@@ -8,13 +8,19 @@ reverse-engineers the HTTP web UI shared by the Netgear Smart Managed Plus
 switch family to provide a clean Python interface and a Cisco IOS-inspired
 shell.
 
-Developed and tested on:
-- Hardware: GS105Ev2 (5-port gigabit)
-- Firmware: V1.6.0.24
+## Verified hardware
 
-A full test suite passes against this hardware.  Other Netgear Smart Managed
-Plus switches that share the same web UI (GS108Ev3, GS116Ev2, etc.) are likely
-compatible.
+The following hardware has been confirmed working end-to-end with all read and
+write operations:
+
+| Model | Hardware version | Firmware | Ports | Notes |
+|-------|-----------------|----------|-------|-------|
+| GS105Ev2 | v2 | V1.6.0.24 | 5 | Verified |
+| GS305E | v1 | V1.0.0.16 | 5 | Verified |
+
+Other Netgear Smart Managed Plus switches that share the same web UI
+(GS108Ev3, GS116Ev2, etc.) are expected to be compatible.  Please open an
+issue if something doesn't work on your hardware.
 
 ## Installation
 
@@ -54,10 +60,14 @@ against the known page structure.
 
 ## Quick start — SDK
 
-```python
-from netgear_tool import Switch, PortSpeed, RateLimit
+Use `make_switch()` to auto-detect the model and firmware version:
 
-with Switch('192.168.0.1', password='secret') as sw:
+```python
+from netgear_tool import make_switch, PortSpeed, RateLimit
+
+with make_switch('192.168.0.1', password='secret') as sw:
+    print(sw.model, sw.firmware)   # e.g. 'GS305E', 'V2.6.0.48'
+
     # Read system info
     print(sw.get_system_info())
 
@@ -65,7 +75,7 @@ with Switch('192.168.0.1', password='secret') as sw:
     for port in sw.get_port_settings():
         print(port)
 
-    # Configure a port
+    # Configure a port (use Switch() directly if make_switch isn't needed)
     sw.set_port(1, speed=PortSpeed.AUTO, fc_enabled=True)
 
     # Rate limiting
